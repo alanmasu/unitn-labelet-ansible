@@ -1,0 +1,79 @@
+---
+# Aggiornamento macchine Rocky 9
+#  - rimuove Wine (in conflitto con Mesa 25.2 di Rocky 9.8)
+#  - sistema il repository di GitHub CLI (chiave GPG ruotata a settembre 2026)
+#  - aggiorna tutti i pacchetti e riavvia solo se necessario
+#
+# Uso:
+#   ansible-playbook -i inventory.ini update.yml -K --limit labelt-02 --check   # prova a vuoto
+#   ansible-playbook -i inventory.ini update.yml -K --limit labelt-02
+#   ansible-playbook -i inventory.ini update.yml -K                             # tutto il gruppo
+
+- name: Aggiornamento Rocky 9
+  hosts: lab_electronics
+  become: true
+  serial: 2                 # quante macchine alla volta
+  max_fail_percentage: 0    # al primo errore si ferma il rollout
+
+  tasks:
+    # ---------- Wine ----------
+    - name: Rimuovi Wine (non utilizzato)
+      ansible.builtin.dnf:
+        name: "wine*"
+        state: absent
+        autoremove: true
+
+    # ---------- GitHub CLI ----------
+    - name: Cerca vecchi file .repo di GitHub CLI con nome diverso
+      ansible.builtin.find:
+        paths: /etc/yum.repos.d
+        patterns: "*.repo"
+        contains: "cli.github.com"
+      register: gh_repo_files
+
+    - name: Rimuovi i vecchi file .repo di GitHub CLI
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ gh_repo_files.files }}"
+      when: item.path != '/etc/yum.repos.d/gh-cli.repo'
+
+    - name: Configura il repository di GitHub CLI con la chiave aggiornata
+      ansible.builtin.yum_repository:
+        name: gh-cli
+        file: gh-cli
+        description: packages for the GitHub CLI
+        baseurl: https://cli.github.com/packages/rpm
+        enabled: true
+        gpgcheck: true
+        repo_gpgcheck: false
+        gpgkey: https://cli.github.com/packages/githubcli-archive-keyring.asc
+
+    - name: Importa le chiavi GPG di GitHub CLI
+      ansible.builtin.command: rpm --import https://cli.github.com/packages/githubcli-archive-keyring.asc
+      changed_when: false
+
+    # ---------- Aggiornamento ----------
+    - name: Aggiorna tutti i pacchetti
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: true
+      register: dnf_result
+
+    - name: Mostra cosa è stato aggiornato
+      ansible.builtin.debug:
+        var: dnf_result.results
+      when: dnf_result.changed
+
+    # ---------- Riavvio ----------
+    - name: Verifica se serve un riavvio
+      ansible.builtin.command: needs-restarting -r
+      register: reboot_check
+      changed_when: false
+      failed_when: reboot_check.rc not in [0, 1]
+
+    - name: Riavvia se necessario
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: reboot_check.rc == 1
