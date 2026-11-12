@@ -1,44 +1,51 @@
 ---
-# Aggiornamento macchine Rocky 9
-#  - rimuove Wine (in conflitto con Mesa 25.2 di Rocky 9.8)
-#  - sistema il repository di GitHub CLI (chiave GPG ruotata a settembre 2026)
-#  - aggiorna tutti i pacchetti e riavvia solo se necessario
+# Rocky 9 update playbook
+#  - removes Wine (conflicts with Mesa 25.2 shipped in Rocky 9.8)
+#  - fixes the GitHub CLI repository (GPG signing key rotated in September 2026)
+#  - updates all packages and reboots only when required
 #
-# Uso:
-#   ansible-playbook -i inventory.ini update.yml -K --limit labelt-02 --check   # prova a vuoto
-#   ansible-playbook -i inventory.ini update.yml -K --limit labelt-02
-#   ansible-playbook -i inventory.ini update.yml -K                             # tutto il gruppo
+# Usage (add -v to see the result of every task, also saved in the log):
+#   ansible-playbook -i inventory.ini update.yml -K -v --limit 10.196.30.91 --check   # dry run on one host
+#   ansible-playbook -i inventory.ini update.yml -K -v --limit 10.196.30.91           # real run on one host
+#   ansible-playbook -i inventory.ini update.yml -K -v                                # whole group
 
-- name: Aggiornamento Rocky 9
+- name: Rocky 9 update
   hosts: lab_electronics
   become: true
-  serial: 2                 # quante macchine alla volta
-  max_fail_percentage: 0    # al primo errore si ferma il rollout
+  # serial: 2                 # number of hosts processed at the same time
+  # max_fail_percentage: 0    # stop the whole rollout at the first failure
 
   tasks:
     # ---------- Wine ----------
-    - name: Rimuovi Wine (non utilizzato)
+    # Wine is not used on these machines and blocks the Mesa update.
+    # If Wine is not installed the task simply reports "ok".
+    - name: Remove Wine (not used)
       ansible.builtin.dnf:
         name: "wine*"
         state: absent
         autoremove: true
 
     # ---------- GitHub CLI ----------
-    - name: Cerca vecchi file .repo di GitHub CLI con nome diverso
+    # Old setups may have the gh repo saved under a different file name:
+    # find every .repo file pointing to cli.github.com.
+    - name: Find old GitHub CLI .repo files
       ansible.builtin.find:
         paths: /etc/yum.repos.d
         patterns: "*.repo"
         contains: "cli.github.com"
       register: gh_repo_files
 
-    - name: Rimuovi i vecchi file .repo di GitHub CLI
+    # Remove them, keeping only the standard gh-cli.repo (rewritten below).
+    - name: Remove old GitHub CLI .repo files
       ansible.builtin.file:
         path: "{{ item.path }}"
         state: absent
       loop: "{{ gh_repo_files.files }}"
       when: item.path != '/etc/yum.repos.d/gh-cli.repo'
 
-    - name: Configura il repository di GitHub CLI con la chiave aggiornata
+    # Write the repo definition pointing to the current keyring,
+    # which contains the new signing key.
+    - name: Configure GitHub CLI repository with the updated key
       ansible.builtin.yum_repository:
         name: gh-cli
         file: gh-cli
@@ -49,31 +56,43 @@
         repo_gpgcheck: false
         gpgkey: https://cli.github.com/packages/githubcli-archive-keyring.asc
 
-    - name: Importa le chiavi GPG di GitHub CLI
+    # Import the keys into the RPM database so the new gh packages
+    # pass the signature check. Importing an existing key is harmless.
+    - name: Import GitHub CLI GPG keys
       ansible.builtin.command: rpm --import https://cli.github.com/packages/githubcli-archive-keyring.asc
       changed_when: false
 
-    # ---------- Aggiornamento ----------
-    - name: Aggiorna tutti i pacchetti
+    # ---------- Update ----------
+    - name: Update all packages
       ansible.builtin.dnf:
         name: "*"
         state: latest
         update_cache: true
       register: dnf_result
 
-    - name: Mostra cosa è stato aggiornato
+    # Show the list of updated packages (only if something changed).
+    - name: Show updated packages
       ansible.builtin.debug:
         var: dnf_result.results
       when: dnf_result.changed
 
-    # ---------- Riavvio ----------
-    - name: Verifica se serve un riavvio
+    # ---------- Reboot ----------
+    # needs-restarting is provided by yum-utils, which is not always installed.
+    - name: Ensure needs-restarting is available
+      ansible.builtin.dnf:
+        name: yum-utils
+        state: present
+
+    # needs-restarting -r exit codes: 0 = no reboot needed, 1 = reboot needed.
+    # Anything else is a real error.
+    - name: Check if a reboot is required
       ansible.builtin.command: needs-restarting -r
       register: reboot_check
       changed_when: false
       failed_when: reboot_check.rc not in [0, 1]
 
-    - name: Riavvia se necessario
+    # Reboot and wait (up to 10 minutes) for the host to come back online.
+    - name: Reboot if required
       ansible.builtin.reboot:
         reboot_timeout: 600
       when: reboot_check.rc == 1
