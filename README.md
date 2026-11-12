@@ -11,8 +11,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-- Hosts are listed in [inventory.ini](inventory.ini) (default user: `tech`).
-- Logs are written to `logs/ansible.log`; failed hosts are saved in `retry/`.
+## The default configuration
+- Logs are written to `logs/ansible.log`; 
+- failed hosts are saved in `retry/`;
+- **PCs**: `10.196.30.91` → `10.196.30.99` (9 hosts), listed in [inventory.ini](inventory.ini).
+  Add or remove an IP there to change the target machines.
+- **User**: playbooks log in as `tech` (local admin, uses sudo) by default.
+- **SSH keys**: copying your key to `tech` on every PC avoids typing the SSH password each time:
+  ```bash
+  for i in $(seq 91 99); do ssh-copy-id tech@10.196.30.$i; done
+  ```
 
 ## Common options
 
