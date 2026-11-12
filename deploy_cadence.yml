@@ -5,8 +5,8 @@
 #  - the new file is syntax-checked with "bash -n" before being installed
 #
 # Usage:
-#   ansible-playbook -i inventory.ini deploy_cadence.yml -K --check --diff --limit 10.196.30.92   # preview on one host
-#   ansible-playbook -i inventory.ini deploy_cadence.yml -K --diff --limit 10.196.30.92           # real run on one host
+#   ansible-playbook -i inventory.ini deploy_cadence.yml -K --check --diff --limit 10.196.30.91   # preview on one host
+#   ansible-playbook -i inventory.ini deploy_cadence.yml -K --diff --limit 10.196.30.91           # real run on one host
 #   ansible-playbook -i inventory.ini deploy_cadence.yml -K --diff                                # whole group
 
 - name: Deploy cadence.sh
