@@ -1,0 +1,95 @@
+---
+# Mount check playbook (no sudo needed)
+#  Test 1: /eda is a mountpoint
+#  Test 2: /tools is a mountpoint
+#  Test 3: /home_ateneo/<user> is mounted and readable by the user
+#
+# The three tests are independent: a failure in one does not skip the others.
+# At the end a summary is printed and the host is marked as failed
+# if at least one test did not pass.
+#
+# Usage (password login, no SSH keys, no sudo):
+#   ansible-playbook -i inventory.ini check_mounts.yml -e ansible_user=$USER -k -v --limit 10.196.30.91
+#   ansible-playbook -i inventory.ini check_mounts.yml -e ansible_user=NEWUSER -k -v
+
+- name: Mount checks
+  hosts: lab_electronics
+  become: false             # everything runs as the logged-in user, no sudo
+
+  vars:
+    # Ansible normally writes its temporary files in ~/.ansible/tmp.
+    # The home is exactly what we are testing, so use /tmp instead:
+    # this way the checks still run even if the home is not mounted
+    # (each run gets its own private sub-directory inside /tmp).
+    ansible_remote_tmp: /tmp
+
+    eda_path: /eda
+    tools_path: /tools
+    # ansible_user_id = the user logged in on the remote host ($USER)
+    home_path: "/home_ateneo/{{ ansible_user_id }}"
+
+  tasks:
+    # ---------- Test 1: /eda ----------
+    # "ls" first: if the path is managed by autofs, accessing it
+    # triggers the mount. Then findmnt checks that it is a mountpoint
+    # (exit code 0 = mountpoint, 1 = not a mountpoint).
+    - name: "Test 1 - {{ eda_path }} is a mountpoint"
+      ansible.builtin.shell: |
+        ls {{ eda_path }} > /dev/null 2>&1
+        findmnt -n -o SOURCE,FSTYPE --mountpoint {{ eda_path }}
+      register: test_eda
+      changed_when: false
+      failed_when: false
+
+    # ---------- Test 2: /tools ----------
+    - name: "Test 2 - {{ tools_path }} is a mountpoint"
+      ansible.builtin.shell: |
+        ls {{ tools_path }} > /dev/null 2>&1
+        findmnt -n -o SOURCE,FSTYPE --mountpoint {{ tools_path }}
+      register: test_tools
+      changed_when: false
+      failed_when: false
+
+    # ---------- Test 3: home ----------
+    # findmnt -T shows the filesystem that contains the path.
+    # If the home is really mounted, the target is the home itself
+    # (or /home_ateneo); if it is not, the target is "/" (local disk).
+    - name: "Test 3a - {{ home_path }} is mounted"
+      ansible.builtin.shell: |
+        ls {{ home_path }} > /dev/null 2>&1
+        findmnt -n -o TARGET,SOURCE,FSTYPE -T {{ home_path }}
+      register: test_home_mount
+      changed_when: false
+      failed_when: false
+
+    # Read the content of the home as the user (no sudo).
+    - name: "Test 3b - {{ home_path }} is readable"
+      ansible.builtin.command: ls -A {{ home_path }}
+      register: test_home_read
+      changed_when: false
+      failed_when: false
+
+    # ---------- Summary ----------
+    - name: Evaluate results
+      ansible.builtin.set_fact:
+        eda_ok: "{{ test_eda.rc == 0 }}"
+        tools_ok: "{{ test_tools.rc == 0 }}"
+        home_mount_ok: >-
+          {{ test_home_mount.rc == 0
+             and test_home_mount.stdout | length > 0
+             and test_home_mount.stdout.split()[0].startswith('/home_ateneo') }}
+        home_read_ok: "{{ test_home_read.rc == 0 }}"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Test 1  {{ eda_path }} mountpoint:   {{ 'OK' if eda_ok else 'FAIL' }}  {{ test_eda.stdout }}"
+          - "Test 2  {{ tools_path }} mountpoint: {{ 'OK' if tools_ok else 'FAIL' }}  {{ test_tools.stdout }}"
+          - "Test 3a {{ home_path }} mounted:     {{ 'OK' if home_mount_ok else 'FAIL' }}  {{ test_home_mount.stdout }}"
+          - "Test 3b {{ home_path }} readable:    {{ 'OK' if home_read_ok else 'FAIL' }}  {{ test_home_read.stderr }}"
+
+    # Mark the host as failed (red in the recap) if any test failed.
+    - name: Fail if any test did not pass
+      ansible.builtin.fail:
+        msg: "At least one mount test failed on {{ inventory_hostname }}, see the summary above"
+      when: not (eda_ok and tools_ok and home_mount_ok and home_read_ok)
