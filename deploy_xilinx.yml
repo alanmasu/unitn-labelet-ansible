@@ -1,0 +1,38 @@
+---
+# Deploy /etc/profile.d/xilinx.sh on all machines
+#  - the reference file lives on the control machine in files/xilinx.sh
+#  - the old file is backed up on each host before being replaced
+#  - the new file is syntax-checked with "bash -n" before being installed
+#
+# Usage:
+#   ansible-playbook -i inventory.ini deploy_xilinx.yml -K --check --diff --limit 10.196.30.92   # preview on one host
+#   ansible-playbook -i inventory.ini deploy_xilinx.yml -K --diff --limit 10.196.30.92           # real run on one host
+#   ansible-playbook -i inventory.ini deploy_xilinx.yml -K --diff                                # whole group
+
+- name: Deploy xilinx.sh
+  hosts: lab_electronics
+  become: true              # /etc/profile.d is owned by root
+
+  tasks:
+    # Copy the file only if it differs from the one already on the host.
+    # backup: true  -> keeps the old version as xilinx.sh.<timestamp>~
+    #                  (in the same directory; profile.d only sources *.sh,
+    #                   so the backup is never executed)
+    # validate      -> runs "bash -n" on the new file first: if it has a
+    #                  syntax error the copy is aborted and the old file stays
+    - name: Install /etc/profile.d/xilinx.sh
+      ansible.builtin.copy:
+        src: files/xilinx.sh
+        dest: /etc/profile.d/xilinx.sh
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        validate: bash -n %s
+      register: xilinx_copy
+
+    # Show where the backup was saved (only when the file was replaced).
+    - name: Show backup location
+      ansible.builtin.debug:
+        msg: "Old file saved as {{ xilinx_copy.backup_file }}"
+      when: xilinx_copy.backup_file is defined
