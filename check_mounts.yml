@@ -9,8 +9,8 @@
 # if at least one test did not pass.
 #
 # Usage (password login, no SSH keys, no sudo):
-#   ansible-playbook -i inventory.ini check_mounts.yml -e ansible_user=$USER -k -v --limit 10.196.30.91
-#   ansible-playbook -i inventory.ini check_mounts.yml -e ansible_user=NEWUSER -k -v
+# ansible-playbook check_mounts.yml -e ansible_user=<USER> -k -v --limit 10.196.30.91
+# ansible-playbook check_mounts.yml -e ansible_user=<USER> -k -v
 
 - name: Mount checks
   hosts: lab_electronics
